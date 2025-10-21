@@ -95,21 +95,78 @@ def parse_file_section(section):
             # Extrair nome do arquivo do caminho (última parte após /)
             file_name = extract_filename_from_path(rcs_file)
             
+            # Extrair Centro e Estado do caminho
+            centro, estado = extract_centro_estado(rcs_file)
+            
+            # Separar data e hora
+            data_str, hora_str = parse_date_time(rev['date'])
+            
             result.append({
                 'rcs_file': clean_path(rcs_file),
                 'working_file': file_name,
                 'revision': rev['revision'],
-                'date': rev['date'],
                 'author': rev['author'],
+                'date': data_str,
+                'time': hora_str,
                 'message': rev['message'],
                 'is_pdr': rev['message'].startswith('#') if rev['message'] else False,
                 'pdr_classification': pdr_info['classification'],
                 'pdr_time': pdr_info['time_minutes'],
-                'pdr_description': pdr_info['description']
+                'pdr_description': pdr_info['description'],
+                'centro': centro,
+                'estado': estado
             })
         return result
     
     return []
+
+def extract_centro_estado(rcs_file):
+    """Extrai Centro e Estado do caminho do arquivo"""
+    centro = None
+    estado = "GERAL"
+    
+    # Padrão para encontrar /telas/Centro/...
+    pattern = r'/telas/Centro/([^/]+)(?:/([^/]+)(?:/|$))?'
+    match = re.search(pattern, rcs_file)
+    
+    if match:
+        centro = match.group(1)
+        # Se houver um segundo grupo (estado) E houver mais diretórios após o estado, usar ele
+        # Caso contrário, manter "GERAL"
+        if match.group(2):
+            # Verificar se há mais diretórios após o estado
+            # Se o que vem após o centro for imediatamente o nome do arquivo, então é GERAL
+            path_after_centro = rcs_file.split(f"/Centro/{centro}/")[-1]
+            path_parts = path_after_centro.split('/')
+            
+            # Se houver mais de uma parte (diretórios adicionais), então o primeiro é o estado
+            # Se só tiver uma parte (apenas o nome do arquivo), então é GERAL
+            if len(path_parts) > 1:
+                estado = match.group(2)
+            else:
+                estado = "GERAL"
+    
+    return centro, estado
+
+def parse_date_time(date_str):
+    """Separa data e hora, convertendo data para DD/MM/AAAA"""
+    if not date_str:
+        return None, None
+    
+    try:
+        # Tentar diferentes formatos de data
+        for fmt in ['%Y/%m/%d %H:%M:%S', '%Y/%m/%d']:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                data_formatada = dt.strftime('%d/%m/%Y')
+                hora_formatada = dt.strftime('%H:%M:%S') if fmt == '%Y/%m/%d %H:%M:%S' else "00:00:00"
+                return data_formatada, hora_formatada
+            except ValueError:
+                continue
+    except:
+        pass
+    
+    return None, None
 
 def extract_filename_from_path(path):
     """Extrai o nome do arquivo do caminho (última parte após /)"""    
@@ -175,22 +232,6 @@ def clean_path(path):
         path = path[:-2]
     
     return path
-
-def parse_date(date_str):
-    if not date_str:
-        return None
-    
-    try:
-        # Tentar diferentes formatos de data
-        for fmt in ['%Y/%m/%d %H:%M:%S', '%Y/%m/%d']:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-    except:
-        pass
-    
-    return None
 
 def create_excel_file(df):
     """Cria um arquivo Excel a partir do DataFrame"""
@@ -400,6 +441,17 @@ def main():
         
         uploaded_file = st.file_uploader("Carregar arquivo de log", type=['csv', 'txt'], key="file_uploader")
         
+        # Botão para carregar novo arquivo (apenas no modo manual)
+        if st.session_state.df is not None:
+            if st.button("🔄 Carregar Novo Arquivo"):
+                st.session_state.df = None
+                st.session_state.log_content = None
+                st.session_state.current_file_hash = None
+                st.session_state.processed_data = None
+                st.session_state.classification_mapping = {}
+                st.session_state.show_classification_grouping = False
+                st.rerun()
+        
         if uploaded_file is not None:
             # Tentar diferentes codificações
             encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
@@ -421,17 +473,6 @@ def main():
                     uploaded_file.seek(0)
                     continue
     
-    # Botão para limpar dados atuais
-    if st.session_state.df is not None:
-        if st.button("🔄 Carregar Novo Arquivo"):
-            st.session_state.df = None
-            st.session_state.log_content = None
-            st.session_state.current_file_hash = None
-            st.session_state.processed_data = None
-            st.session_state.classification_mapping = {}
-            st.session_state.show_classification_grouping = False
-            st.rerun()
-    
     # Usar dados da session state se disponíveis
     if st.session_state.log_content is not None:
         content = st.session_state.log_content
@@ -443,9 +484,6 @@ def main():
             with st.spinner('Processando arquivo...'):
                 data = parse_log_content(content)
                 df = pd.DataFrame(data)
-                
-                # Converter datas
-                df['parsed_date'] = df['date'].apply(parse_date)
                 
                 st.session_state.df = df
                 st.session_state.processed_data = {
@@ -481,11 +519,34 @@ def main():
         ignore_excluded = st.sidebar.checkbox("Ignorar excluídos", value=True,
                                             help="Ignorar arquivos excluídos (ficam registrados no diretório /Attic/)")
         
+        # Filtro por Centro
+        if not df.empty and 'centro' in df.columns:
+            centros = sorted(df['centro'].dropna().unique())
+            selected_centros = st.sidebar.multiselect(
+                "Centro",
+                options=centros,
+                default=[],
+                help="Selecione um ou mais centros"
+            )
+        
+        # Filtro por Estado
+        if not df.empty and 'estado' in df.columns:
+            estados = sorted(df['estado'].dropna().unique())
+            selected_estados = st.sidebar.multiselect(
+                "Estado",
+                options=estados,
+                default=[],
+                help="Selecione um ou mais estados"
+            )
+        
+        # Filtro por caminho
+        path_filter = st.sidebar.text_input("Caminho da Tela", help="Filtrar por caminho do arquivo")
+        
         # Filtro por nome do arquivo (multiseleção)
         if not df.empty:
             filenames = sorted(df['working_file'].unique())
             selected_filenames = st.sidebar.multiselect(
-                "Nome do Arquivo",
+                "Nome da Tela",
                 options=filenames,
                 default=[],
                 help="Selecione um ou mais arquivos"
@@ -500,39 +561,49 @@ def main():
                 help="Selecione um ou mais autores"
             )
             
-            # Filtro por caminho
-            path_filter = st.sidebar.text_input("Caminho", help="Filtrar por caminho do arquivo")
-            
             # Filtro por data
             col1, col2 = st.sidebar.columns(2)
             with col1:
-                min_date = df['parsed_date'].min()
-                max_date = df['parsed_date'].max()
-                
-                if pd.notna(min_date) and pd.notna(max_date):
-                    # Data padrão: fim = data máxima, início = fim - 30 dias
-                    default_end_date = max_date.date()
-                    default_start_date = (max_date - timedelta(days=30)).date()
-                    
-                    start_date = st.date_input(
-                        "Data Início",
-                        value=default_start_date,
-                        min_value=min_date.date(),
-                        max_value=max_date.date(),
-                        help="Por padrão é definido como 30 dias antes da data final encontrada."
-                    )
+                if 'date' in df.columns and not df.empty:
+                    # Converter datas para datetime para filtro
+                    try:
+                        df_date_filter = df.copy()
+                        df_date_filter['date_dt'] = pd.to_datetime(df_date_filter['date'], format='%d/%m/%Y', errors='coerce')
+                        min_date = df_date_filter['date_dt'].min()
+                        max_date = df_date_filter['date_dt'].max()
+                        
+                        if pd.notna(min_date) and pd.notna(max_date):
+                            default_end_date = max_date.date()
+                            default_start_date = (max_date - timedelta(days=30)).date()
+                            
+                            start_date = st.date_input(
+                                "Data Início",
+                                value=default_start_date,
+                                min_value=min_date.date(),
+                                max_value=max_date.date(),
+                                help="Por padrão é definido como 30 dias antes da data final encontrada."
+                            )
+                        else:
+                            start_date = st.date_input("Data Início")
+                    except:
+                        start_date = st.date_input("Data Início")
                 else:
-                    start_date = st.date_input("Data Início",
-                    help="Por padrão é definido como 30 dias antes da data final encontrada.")
+                    start_date = st.date_input("Data Início")
             
             with col2:
-                if pd.notna(min_date) and pd.notna(max_date):
-                    end_date = st.date_input(
-                        "Data Fim", 
-                        value=default_end_date,
-                        min_value=min_date.date(),
-                        max_value=max_date.date()
-                    )
+                if 'date' in df.columns and not df.empty:
+                    try:
+                        if pd.notna(min_date) and pd.notna(max_date):
+                            end_date = st.date_input(
+                                "Data Fim", 
+                                value=default_end_date,
+                                min_value=min_date.date(),
+                                max_value=max_date.date()
+                            )
+                        else:
+                            end_date = st.date_input("Data Fim")
+                    except:
+                        end_date = st.date_input("Data Fim")
                 else:
                     end_date = st.date_input("Data Fim")
         
@@ -553,6 +624,18 @@ def main():
             if ignore_excluded:
                 filtered_df = filtered_df[~filtered_df['rcs_file'].str.contains('/Attic/', na=False)]
             
+            # Filtro por Centro
+            if 'centro' in filtered_df.columns and selected_centros:
+                filtered_df = filtered_df[filtered_df['centro'].isin(selected_centros)]
+            
+            # Filtro por Estado
+            if 'estado' in filtered_df.columns and selected_estados:
+                filtered_df = filtered_df[filtered_df['estado'].isin(selected_estados)]
+            
+            # Filtro por caminho
+            if path_filter:
+                filtered_df = filtered_df[filtered_df['rcs_file'].str.contains(path_filter, case=False, na=False)]
+            
             # Filtro por nome do arquivo
             if selected_filenames:
                 filtered_df = filtered_df[filtered_df['working_file'].isin(selected_filenames)]
@@ -561,23 +644,21 @@ def main():
             if selected_authors:
                 filtered_df = filtered_df[filtered_df['author'].isin(selected_authors)]
             
-            # Filtro por caminho
-            if path_filter:
-                filtered_df = filtered_df[filtered_df['rcs_file'].str.contains(path_filter, case=False, na=False)]
-            
             # Filtro por data
-            if 'parsed_date' in filtered_df.columns:
-                if start_date:
-                    start_datetime = datetime.combine(start_date, datetime.min.time())
-                    filtered_df = filtered_df[filtered_df['parsed_date'] >= start_datetime]
-                
-                if end_date:
-                    end_datetime = datetime.combine(end_date, datetime.max.time())
-                    filtered_df = filtered_df[filtered_df['parsed_date'] <= end_datetime]
-            
-            # Remover coluna auxiliar
-            if 'parsed_date' in filtered_df.columns:
-                filtered_df = filtered_df.drop('parsed_date', axis=1)
+            if 'date' in filtered_df.columns:
+                try:
+                    filtered_df_date = filtered_df.copy()
+                    filtered_df_date['date_dt'] = pd.to_datetime(filtered_df_date['date'], format='%d/%m/%Y', errors='coerce')
+                    
+                    if start_date:
+                        start_datetime = datetime.combine(start_date, datetime.min.time())
+                        filtered_df = filtered_df[filtered_df_date['date_dt'] >= start_datetime]
+                    
+                    if end_date:
+                        end_datetime = datetime.combine(end_date, datetime.max.time())
+                        filtered_df = filtered_df[filtered_df_date['date_dt'] <= end_datetime]
+                except:
+                    pass
             
             # Aplicar mapeamento de classificações se existir
             if st.session_state.classification_mapping:
@@ -589,34 +670,71 @@ def main():
             # Ordenação padrão: Data de modificação
             filtered_df = filtered_df.sort_values(by=['date'], ascending=[False])
             
-            # Criar DataFrame para exibição
-            display_columns = ['rcs_file', 'working_file', 'revision', 'date', 'author', 'message']
+            # Criar DataFrame para exibição com o novo formato
+            display_columns = ['centro', 'estado', 'rcs_file', 'working_file', 'revision', 'author', 'date', 'time']
+            
+            # Adicionar colunas PDR se for análise PDR
+            if pdr_only:
+                display_columns.extend(['pdr_classification', 'pdr_time', 'pdr_description'])
+            else:
+                display_columns.append('message')
+            
             display_df = filtered_df[display_columns].copy()
             
             # Renomear colunas para exibição
-            display_df = display_df.rename(columns={
-                'rcs_file': 'Caminho do Arquivo',
-                'working_file': 'Nome do Arquivo', 
+            column_rename_map = {
+                'centro': 'Centro',
+                'estado': 'Estado', 
+                'rcs_file': 'Caminho da Tela',
+                'working_file': 'Nome da Tela',
                 'revision': 'Revisão',
-                'date': 'Data',
                 'author': 'Autor',
-                'message': 'Mensagem'
-            })
+                'date': 'Data',
+                'time': 'Hora',
+                'message': 'Mensagem',
+                'pdr_classification': 'Tipo',
+                'pdr_time': 'Tempo (min)',
+                'pdr_description': 'Comentário'
+            }
             
-            # Configurar a exibição do DataFrame (sem índice)
+            display_df = display_df.rename(columns=column_rename_map)
+            
+            # Configurar a exibição do DataFrame (sem índice e ocultando Caminho da Tela)
+            column_config = {
+                "Centro": st.column_config.TextColumn(width="small"),
+                "Estado": st.column_config.TextColumn(width="small"),
+                "Caminho da Tela": st.column_config.Column(disabled=True),  # Oculta por padrão
+                "Nome da Tela": st.column_config.TextColumn(width="small"),
+                "Revisão": st.column_config.TextColumn(width="small"),
+                "Autor": st.column_config.TextColumn(width="medium"),
+                "Data": st.column_config.TextColumn(width="small"),
+                "Hora": st.column_config.TextColumn(width="small")
+            }
+            
+            # Adicionar configurações para colunas PDR se for análise PDR
+            if pdr_only:
+                column_config.update({
+                    "Tipo": st.column_config.TextColumn(width="small"),
+                    "Tempo (min)": st.column_config.NumberColumn(width="small"),
+                    "Comentário": st.column_config.TextColumn(width="large")
+                })
+            else:
+                column_config["Mensagem"] = st.column_config.TextColumn(width="large")
+            
+            # Ordem das colunas para exibição (sem Caminho da Tela)
+            column_order = ['Centro', 'Estado', 'Nome da Tela', 'Revisão', 'Autor', 'Data', 'Hora']
+            if pdr_only:
+                column_order.extend(['Tipo', 'Tempo (min)', 'Comentário'])
+            else:
+                column_order.append('Mensagem')
+            
             st.dataframe(
                 display_df,
                 width="stretch",
                 height=600,
                 hide_index=True,
-                column_config={
-                    "Caminho do Arquivo": st.column_config.TextColumn(width="medium"),
-                    "Nome do Arquivo": st.column_config.TextColumn(width="small"),
-                    "Revisão": st.column_config.TextColumn(width="small"),
-                    "Data": st.column_config.TextColumn(width="medium"),
-                    "Autor": st.column_config.TextColumn(width="medium"),
-                    "Mensagem": st.column_config.TextColumn(width="large")
-                }
+                column_config=column_config,
+                column_order=column_order
             )
             st.caption("ℹ️ O CrossVC considera o fuso horário GMT+0 (+3h em relação ao horário local).")
             
@@ -701,24 +819,29 @@ def main():
                                 key="source_classifications"
                             )
                         
-                        # Botão para confirmar agrupamento
-                        if st.button("Confirmar Agrupamento"):
-                            if target_classification and source_classifications:
-                                # Adicionar mapeamento ao session state
-                                for source in source_classifications:
-                                    st.session_state.classification_mapping[source] = target_classification
-                                
-                                st.success(f"Classificações {source_classifications} agrupadas em {target_classification}")
-                                
-                                # Forçar rerun para atualizar as listas
-                                st.rerun()
-                    
-                    # Botão para limpar agrupamentos
-                    if st.session_state.classification_mapping:
-                        if st.button("🗑️ Limpar Agrupamentos"):
-                            st.session_state.classification_mapping = {}
-                            st.success("Agrupamentos limpos!")
-                            st.rerun()
+                        # Botões lado a lado
+                        col_btn1, col_btn2 = st.columns(2)
+                        
+                        with col_btn1:
+                            # Botão para confirmar agrupamento
+                            if st.button("Confirmar Agrupamento"):
+                                if target_classification and source_classifications:
+                                    # Adicionar mapeamento ao session state
+                                    for source in source_classifications:
+                                        st.session_state.classification_mapping[source] = target_classification
+                                    
+                                    st.success(f"Classificações {source_classifications} agrupadas em {target_classification}")
+                                    
+                                    # Forçar rerun para atualizar as listas
+                                    st.rerun()
+                        
+                        with col_btn2:
+                            # Botão para limpar agrupamentos (ao lado do confirmar)
+                            if st.session_state.classification_mapping:
+                                if st.button("🗑️ Limpar Agrupamentos"):
+                                    st.session_state.classification_mapping = {}
+                                    st.success("Agrupamentos limpos!")
+                                    st.rerun()
                     
                     # Análise de tempo por classificação
                     st.subheader("⏱️ Análise de Tempo")
@@ -782,25 +905,10 @@ def main():
                         )
                         st.plotly_chart(fig_files, use_container_width=True)
                     
-                    # Análise por centro (CNOS, COSR-NE, COSR-NCO, COSR-S, COSR-SE)
+                    # Análise por centro
                     st.subheader("🏢 Análise por Centro")
                     
-                    # Mapear centros
-                    centros = {
-                        'CNOS': 'CNOS',
-                        'COSR-NE': 'COSR-NE', 
-                        'COSR-NCO': 'COSR-NCO',
-                        'COSR-S': 'COSR-S',
-                        'COSR-SE': 'COSR-SE'
-                    }
-                    
-                    # Adicionar coluna de centro
-                    pdr_df['centro'] = None
-                    for centro_key, centro_name in centros.items():
-                        mask = pdr_df['rcs_file'].str.contains(centro_key, na=False)
-                        pdr_df.loc[mask, 'centro'] = centro_name
-                    
-                    # Análise por centro
+                    # Análise por centro (já extraído)
                     centro_analysis = pdr_df[pdr_df['centro'].notna()]
                     
                     if len(centro_analysis) > 0:
@@ -855,6 +963,53 @@ def main():
                         
                         centro_stats.columns = ['Tempo Total (min)', 'Tempo Médio (min)', 'Tempo Máximo (min)', 'Total de Revisões', 'Arquivos Únicos']
                         st.dataframe(centro_stats, width="stretch")
+                    
+                    # Análise por estado
+                    st.subheader("🗺️ Análise por Estado")
+                    
+                    estado_analysis = pdr_df[pdr_df['estado'].notna()]
+                    
+                    if len(estado_analysis) > 0:
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Quantidade por estado - ordenar decrescente
+                            count_by_estado = estado_analysis['estado'].value_counts().sort_values(ascending=False).head(10)
+                            fig_count_estado = px.bar(
+                                x=count_by_estado.index,
+                                y=count_by_estado.values,
+                                title="Top 10 Estados por Quantidade de Arquivos",
+                                labels={'x': 'Estado', 'y': 'Quantidade de Arquivos'},
+                                color=count_by_estado.values,
+                                color_continuous_scale='purples'
+                            )
+                            st.plotly_chart(fig_count_estado, use_container_width=True)
+                        
+                        with col2:
+                            # Tempo por estado - ordenar decrescente
+                            time_by_estado = estado_analysis.groupby('estado')['pdr_time'].sum().sort_values(ascending=False).head(10)
+                            
+                            fig_time_estado = px.bar(
+                                x=time_by_estado.index,
+                                y=time_by_estado.values,
+                                title="Top 10 Estados por Tempo Total (minutos)",
+                                labels={'x': 'Estado', 'y': 'Tempo Total (min)'},
+                                color=time_by_estado.values,
+                                color_continuous_scale='oranges'
+                            )
+                            
+                            # Adicionar anotações com o tempo
+                            for i, (estado, time_val) in enumerate(zip(time_by_estado.index, time_by_estado.values)):
+                                fig_time_estado.add_annotation(
+                                    x=estado,
+                                    y=time_val,
+                                    text=f"{time_val:.0f} min",
+                                    showarrow=False,
+                                    yshift=10,
+                                    font=dict(color="white", size=12)
+                                )
+                            
+                            st.plotly_chart(fig_time_estado, use_container_width=True)
                     
                     # Estatísticas gerais
                     st.subheader("📊 Estatísticas Gerais PDR")
