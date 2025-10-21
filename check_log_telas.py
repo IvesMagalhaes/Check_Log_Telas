@@ -704,19 +704,19 @@ def main():
                 "Centro": st.column_config.TextColumn(width="small"),
                 "Estado": st.column_config.TextColumn(width="small"),
                 "Caminho da Tela": st.column_config.Column(disabled=True),  # Oculta por padrão
-                "Nome da Tela": st.column_config.TextColumn(width="small"),
-                "Revisão": st.column_config.TextColumn(width="small"),
+                "Nome da Tela": st.column_config.TextColumn(width="medium"),
+                "Revisão": st.column_config.TextColumn(width="none"),
                 "Autor": st.column_config.TextColumn(width="medium"),
-                "Data": st.column_config.TextColumn(width="small"),
-                "Hora": st.column_config.TextColumn(width="small")
+                "Data": st.column_config.TextColumn(width="none"),
+                "Hora": st.column_config.TextColumn(width="none")
             }
             
             # Adicionar configurações para colunas PDR se for análise PDR
             if pdr_only:
                 column_config.update({
-                    "Tipo": st.column_config.TextColumn(width="small"),
+                    "Tipo": st.column_config.TextColumn(width="none"),
                     "Tempo (min)": st.column_config.NumberColumn(width="small"),
-                    "Comentário": st.column_config.TextColumn(width="large")
+                    "Comentário": st.column_config.TextColumn(width="medium")
                 })
             else:
                 column_config["Mensagem"] = st.column_config.TextColumn(width="large")
