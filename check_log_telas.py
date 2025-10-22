@@ -667,8 +667,22 @@ def main():
             # Exibir resultados
             st.subheader(f"Resultados ({len(filtered_df)} registros)")
 
-            # Ordenação padrão: Data de modificação
-            filtered_df = filtered_df.sort_values(by=['date'], ascending=[False])
+            # CORREÇÃO DA ORDENAÇÃO - FORMA MAIS ROBUSTA
+            # Criar uma cópia para não modificar o original
+            filtered_df_sorted = filtered_df.copy()
+            
+            # Converter a coluna 'date' para datetime
+            filtered_df_sorted['date_dt'] = pd.to_datetime(
+                filtered_df_sorted['date'], 
+                format='%d/%m/%Y', 
+                errors='coerce'
+            )
+            
+            # Ordenar pela data convertida
+            filtered_df_sorted = filtered_df_sorted.sort_values(by=['date_dt','time'], ascending=[False,False])
+            
+            # Remover a coluna temporária
+            filtered_df_sorted = filtered_df_sorted.drop('date_dt', axis=1)
             
             # Criar DataFrame para exibição com o novo formato
             display_columns = ['centro', 'estado', 'rcs_file', 'working_file', 'revision', 'author', 'date', 'time']
@@ -679,7 +693,7 @@ def main():
             else:
                 display_columns.append('message')
             
-            display_df = filtered_df[display_columns].copy()
+            display_df = filtered_df_sorted[display_columns].copy()
             
             # Renomear colunas para exibição
             column_rename_map = {
