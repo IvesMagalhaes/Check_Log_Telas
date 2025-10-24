@@ -613,36 +613,39 @@ def main():
         if not df.empty:
             # Filtro PDR
             if pdr_only:
-                filtered_df = filtered_df[filtered_df['is_pdr'] == True]
+                filtered_df = filtered_df.loc[filtered_df['is_pdr'] == True]
             
             # Filtro Ignorar Ana e Dig
             if ignore_ana_dig:
-                filtered_df = filtered_df[~filtered_df['working_file'].str.startswith('Ana', na=False)]
-                filtered_df = filtered_df[~filtered_df['working_file'].str.startswith('Dig', na=False)]
+                mask_ana = ~filtered_df['working_file'].str.startswith('Ana', na=False)
+                mask_dig = ~filtered_df['working_file'].str.startswith('Dig', na=False)
+                filtered_df = filtered_df.loc[mask_ana & mask_dig]
             
             # Filtro excluídos
             if ignore_excluded:
-                filtered_df = filtered_df[~filtered_df['rcs_file'].str.contains('/Attic/', na=False)]
+                mask_excluded = ~filtered_df['rcs_file'].str.contains('/Attic/', na=False)
+                filtered_df = filtered_df.loc[mask_excluded]
             
             # Filtro por Centro
             if 'centro' in filtered_df.columns and selected_centros:
-                filtered_df = filtered_df[filtered_df['centro'].isin(selected_centros)]
+                filtered_df = filtered_df.loc[filtered_df['centro'].isin(selected_centros)]
             
             # Filtro por Estado
             if 'estado' in filtered_df.columns and selected_estados:
-                filtered_df = filtered_df[filtered_df['estado'].isin(selected_estados)]
+                filtered_df = filtered_df.loc[filtered_df['estado'].isin(selected_estados)]
             
             # Filtro por caminho
             if path_filter:
-                filtered_df = filtered_df[filtered_df['rcs_file'].str.contains(path_filter, case=False, na=False)]
+                mask_path = filtered_df['rcs_file'].str.contains(path_filter, case=False, na=False)
+                filtered_df = filtered_df.loc[mask_path]
             
             # Filtro por nome do arquivo
             if selected_filenames:
-                filtered_df = filtered_df[filtered_df['working_file'].isin(selected_filenames)]
+                filtered_df = filtered_df.loc[filtered_df['working_file'].isin(selected_filenames)]
             
             # Filtro por autor
             if selected_authors:
-                filtered_df = filtered_df[filtered_df['author'].isin(selected_authors)]
+                filtered_df = filtered_df.loc[filtered_df['author'].isin(selected_authors)]
             
             # Filtro por data
             if 'date' in filtered_df.columns:
@@ -652,11 +655,13 @@ def main():
                     
                     if start_date:
                         start_datetime = datetime.combine(start_date, datetime.min.time())
-                        filtered_df = filtered_df[filtered_df_date['date_dt'] >= start_datetime]
+                        mask_start = filtered_df_date['date_dt'] >= start_datetime
+                        filtered_df = filtered_df.loc[mask_start]
                     
                     if end_date:
                         end_datetime = datetime.combine(end_date, datetime.max.time())
-                        filtered_df = filtered_df[filtered_df_date['date_dt'] <= end_datetime]
+                        mask_end = filtered_df_date['date_dt'] <= end_datetime
+                        filtered_df = filtered_df.loc[mask_end]
                 except:
                     pass
             
