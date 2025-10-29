@@ -371,6 +371,42 @@ def connect_ssh_and_get_log(host, username, password, status_placeholder):
         st.error(f"Erro na conexão SSH: {str(e)}")
         return None
 
+def get_filtered_options(df, ignore_ana_dig=True, ignore_temp_files=True):
+    """Retorna opções filtradas para os selectboxes baseado nos filtros aplicados"""
+    filtered_df = df.copy()
+    
+    # Aplicar filtros básicos que afetam as opções
+    if ignore_ana_dig:
+        filtered_df = filtered_df.loc[~filtered_df['working_file'].str.startswith('Ana', na=False)]
+        filtered_df = filtered_df.loc[~filtered_df['working_file'].str.startswith('Dig', na=False)]
+    
+    # Filtrar arquivos temporários (sempre True)
+    if ignore_temp_files:
+        filtered_df = filtered_df.loc[~filtered_df['working_file'].str.startswith('.#', na=False)]
+        filtered_df = filtered_df.loc[~filtered_df['working_file'].str.startswith('.nfs', na=False)]
+    
+    # Extrair opções filtradas
+    options = {
+        'filenames': sorted(filtered_df['working_file'].unique()),
+        'authors': sorted(filtered_df['author'].dropna().unique()),
+        'centros': sorted(filtered_df['centro'].dropna().unique()) if 'centro' in filtered_df.columns else [],
+        'estados': sorted(filtered_df['estado'].dropna().unique()) if 'estado' in filtered_df.columns else []
+    }
+    
+    return options
+
+def get_theme_adaptive_colors():
+    """Retorna cores que funcionam bem em ambos os temas claro e escuro"""
+    # Cores que funcionam bem em ambos os temas
+    return {
+        'text_color': "#AAAAAA",
+        'grid_color': '#E0E0E0',
+        'plot_bgcolor': 'rgba(0,0,0,0)',
+        'paper_bgcolor': 'rgba(0,0,0,0)',
+        'color_scale': 'sunsetdark',
+        'qualitative_scale': 'Plotly'
+    }
+
 def main():
     st.set_page_config(page_title="Check Log de Telas", page_icon="📊", layout="wide")
     
@@ -519,48 +555,64 @@ def main():
         ignore_excluded = st.sidebar.checkbox("Ignorar excluídos", value=True,
                                             help="Ignorar arquivos excluídos (ficam registrados no diretório /Attic/)")
         
-        # Filtro por Centro
-        if not df.empty and 'centro' in df.columns:
-            centros = sorted(df['centro'].dropna().unique())
-            selected_centros = st.sidebar.multiselect(
-                "Centro",
-                options=centros,
-                default=[],
-                help="Selecione um ou mais centros"
-            )
-        
-        # Filtro por Estado
-        if not df.empty and 'estado' in df.columns:
-            estados = sorted(df['estado'].dropna().unique())
-            selected_estados = st.sidebar.multiselect(
-                "Estado",
-                options=estados,
-                default=[],
-                help="Selecione um ou mais estados"
-            )
-        
-        # Filtro por caminho
-        path_filter = st.sidebar.text_input("Caminho da Tela", help="Filtrar por caminho do arquivo")
-        
-        # Filtro por nome do arquivo (multiseleção)
+        # Ignorar temporários (fixo - sempre True)
+        ignore_temp_files = True
+               
+        # Obter opções filtradas
         if not df.empty:
-            filenames = sorted(df['working_file'].unique())
-            selected_filenames = st.sidebar.multiselect(
-                "Nome da Tela",
-                options=filenames,
-                default=[],
-                help="Selecione um ou mais arquivos"
-            )
+            filtered_options = get_filtered_options(df, ignore_ana_dig, ignore_temp_files)
+            
+            # Filtro por Centro
+            if filtered_options['centros']:
+                selected_centros = st.sidebar.multiselect(
+                    "Centro",
+                    options=filtered_options['centros'],
+                    default=[],
+                    placeholder="Selecione um ou mais centros",
+                    help="Filtra pelo padrão seguinte a /telas/Centro/"
+                )
+            else:
+                selected_centros = []
+            
+            # Filtro por Estado
+            if filtered_options['estados']:
+                selected_estados = st.sidebar.multiselect(
+                    "Estado",
+                    options=filtered_options['estados'],
+                    default=[],
+                    placeholder="Selecione um ou mais estados/subdiretórios",
+                    help="Filtra pelo padrão seguinte a /telas/Centro/Nome_do_Centro/"
+                )
+            else:
+                selected_estados = []
+            
+            # Filtro por nome do arquivo (multiseleção)
+            if filtered_options['filenames']:
+                selected_filenames = st.sidebar.multiselect(
+                    "Nome da Tela",
+                    options=filtered_options['filenames'],
+                    default=[],
+                    placeholder="Selecione um ou mais arquivos",
+                    help="Filtra pelo nome do arquivo selecionado"
+                )
+            else:
+                selected_filenames = []
             
             # Filtro por autor (multiseleção)
-            authors = sorted(df['author'].dropna().unique())
-            selected_authors = st.sidebar.multiselect(
-                "Autor",
-                options=authors,
-                default=[],
-                help="Selecione um ou mais autores"
-            )
+            if filtered_options['authors']:
+                selected_authors = st.sidebar.multiselect(
+                    "Autor",
+                    options=filtered_options['authors'],
+                    default=[],
+                    placeholder="Selecione um ou mais autores",
+                    help="Filtra pelo autor do commit"
+                )
+            else:
+                selected_authors = []
             
+            # Filtro por caminho
+            path_filter = st.sidebar.text_input("Caminho da Tela", placeholder="Ex: /DRILL/", help="Filtrar pelo caminho do arquivo")
+
             # Filtro por data
             col1, col2 = st.sidebar.columns(2)
             with col1:
@@ -581,14 +633,15 @@ def main():
                                 value=default_start_date,
                                 min_value=min_date.date(),
                                 max_value=max_date.date(),
+                                format="DD/MM/YYYY",
                                 help="Por padrão é definido como 30 dias antes da data final encontrada."
                             )
                         else:
-                            start_date = st.date_input("Data Início")
+                            start_date = st.date_input("Data Início",format="DD/MM/YYYY")
                     except:
-                        start_date = st.date_input("Data Início")
+                        start_date = st.date_input("Data Início",format="DD/MM/YYYY")
                 else:
-                    start_date = st.date_input("Data Início")
+                    start_date = st.date_input("Data Início",format="DD/MM/YYYY")
             
             with col2:
                 if 'date' in df.columns and not df.empty:
@@ -598,14 +651,15 @@ def main():
                                 "Data Fim", 
                                 value=default_end_date,
                                 min_value=min_date.date(),
-                                max_value=max_date.date()
+                                max_value=max_date.date(),
+                                format="DD/MM/YYYY"
                             )
                         else:
-                            end_date = st.date_input("Data Fim")
+                            end_date = st.date_input("Data Fim",format="DD/MM/YYYY")
                     except:
-                        end_date = st.date_input("Data Fim")
+                        end_date = st.date_input("Data Fim",format="DD/MM/YYYY")
                 else:
-                    end_date = st.date_input("Data Fim")
+                    end_date = st.date_input("Data Fim",format="DD/MM/YYYY")
         
         # Aplicar filtros
         filtered_df = df.copy()
@@ -620,6 +674,12 @@ def main():
                 mask_ana = ~filtered_df['working_file'].str.startswith('Ana', na=False)
                 mask_dig = ~filtered_df['working_file'].str.startswith('Dig', na=False)
                 filtered_df = filtered_df.loc[mask_ana & mask_dig]
+            
+            # Filtro Ignorar arquivos temporários (sempre aplicado)
+            if ignore_temp_files:
+                mask_temp1 = ~filtered_df['working_file'].str.startswith('.#', na=False)
+                mask_temp2 = ~filtered_df['working_file'].str.startswith('.nfs', na=False)
+                filtered_df = filtered_df.loc[mask_temp1 & mask_temp2]
             
             # Filtro excluídos
             if ignore_excluded:
@@ -749,13 +809,58 @@ def main():
             
             st.dataframe(
                 display_df,
-                width="stretch",
+                use_container_width=True,
                 height=600,
                 hide_index=True,
                 column_config=column_config,
                 column_order=column_order
             )
-            st.caption("ℹ️ O CrossVC considera o fuso horário GMT+0 (+3h em relação ao horário local).")
+           
+            # Botão de popover para Classificação de Commits
+            col_info, col_classif = st.columns([1, 5])
+            with col_info:
+                st.caption("ℹ️ O CrossVC considera o fuso horário GMT+0 (+3h em relação ao horário local).")
+            with col_classif:
+                with st.popover("📋 Classificação de Commits", use_container_width=False):
+                    st.markdown("""
+                    FORMATO: __**#CLASSIFICAÇÃO#TEMPO#COMENTÁRIO**__  
+                    Onde a classificação é uma das listadas abaixo, o tempo (em minutos) é um número inteiro e o comentário é o campo livre para explicação do motivo da revisão.  
+                      
+                    **1. ANOMALIA**  
+                    Refere-se a erros ou incoerências identificados externamente, por exemplo, pelas Salas de Operação ou outras gerências (como RSO, PRI), que impactam o funcionamento ou a coerência da tela.  
+                    • Correções internamente identificadas devem ser classificadas como MANUTENÇÃO.  
+                    • O tempo de execução da anomalia deve considerar todas as etapas envolvidas, como abertura do chamado no sistema OTRS, análise de diagrama envolvido, edição da tela, entre outras.  
+                    • Quando houver mais de um tipo de alteração (ex: anomalia e melhoria), devem ser realizados commits separados, salvo quando uma das ações for irrelevante frente à outra.
+
+                    **2. MANUT (Manutenção)**  
+                    Refere-se a ajustes de rotina, preventivos ou corretivos, realizados pela equipe da PDR sem demanda externa.  
+                    **Exemplos:**  
+                    • Retirada de sinalização de futuro  
+                    • Ajustes de textos de revisões de IO  
+                    • Troca de agente operador  
+                    • Troca de posicionamento de equipamentos  
+                    • Correções de erros identificados internamente, desde que não tenham sido sinalizados por outras áreas
+
+                    **3. RECOMP (Recomposição)**  
+                    Classificação destinada a alterações em telas relacionadas ao processo de recomposição do sistema, como os corredores de recomposição.  
+                    • **Exclusão**: casos em que houver erro identificado externamente (ANOMALIA), mesmo em telas de recomposição, devem ser registrados como ANOMALIA.
+
+                    **4. NOVA**  
+                    Aplica-se à criação de novas telas no REGER e equipamentos novos em telas já existentes.
+
+                    **5. MELHORIA**  
+                    Refere-se a alterações não essenciais, que não tratam erros, mas têm o objetivo de otimizar a usabilidade, visualização ou interpretação da tela.  
+                    **Exemplos:**  
+                    • Mudanças de layout  
+                    • Inclusão de novos filtros  
+                    • Inserção de elementos visuais ou alarmes  
+                    • Ajustes de lógica solicitados pela operação, sem envolvimento de falha
+                    """)
+
+            # Botão de download em Excel
+            today = datetime.now().strftime("%d_%m_%Y")
+            filename = f"Check_log_telas-{today}.xlsx"
+
             
             # Botão de download em Excel
             today = datetime.now().strftime("%d_%m_%Y")
@@ -776,6 +881,10 @@ def main():
                 file_name=filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+            # Botão de download em Excel
+            today = datetime.now().strftime("%d_%m_%Y")
+            filename = f"Check_log_telas-{today}.xlsx"
             
             # Análise PDR - Estatísticas detalhadas
             if pdr_only and len(filtered_df) > 0:
@@ -873,11 +982,17 @@ def main():
                     with col1:
                         # Gráfico de pizza - Tempo por classificação
                         if len(time_by_classification) > 0:
+                            colors = get_theme_adaptive_colors()
                             fig_pie = px.pie(
                                 values=time_by_classification.values,
                                 names=time_by_classification.index,
                                 title="Distribuição de Tempo por Classificação",
                                 color_discrete_sequence=px.colors.qualitative.Set3
+                            )
+                            fig_pie.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color'])
                             )
                             fig_pie.update_traces(textposition='inside', textinfo='percent+label')
                             st.plotly_chart(fig_pie, use_container_width=True)
@@ -885,13 +1000,22 @@ def main():
                     with col2:
                         # Gráfico de barras - Tempo por classificação com tempo nas anotações
                         if len(time_by_classification) > 0:
+                            colors = get_theme_adaptive_colors()
                             fig_bar = px.bar(
                                 x=time_by_classification.index,
                                 y=time_by_classification.values,
                                 title="Tempo Total por Classificação (minutos)",
                                 labels={'x': 'Classificação', 'y': 'Tempo Total (min)'},
                                 color=time_by_classification.values,
-                                color_continuous_scale='viridis'
+                                color_continuous_scale=colors['color_scale']
+                            )
+                            
+                            fig_bar.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color']),
+                                xaxis=dict(gridcolor=colors['grid_color']),
+                                yaxis=dict(gridcolor=colors['grid_color'])
                             )
                             
                             # Adicionar anotações com o tempo
@@ -902,7 +1026,7 @@ def main():
                                     text=f"{time_val:.0f} min",
                                     showarrow=False,
                                     yshift=10,
-                                    font=dict(color="white", size=12)
+                                    font=dict(color=colors['text_color'], size=12)
                                 )
                             
                             st.plotly_chart(fig_bar, use_container_width=True)
@@ -913,6 +1037,7 @@ def main():
                     time_by_file = pdr_df.groupby('working_file')['pdr_time'].sum().sort_values(ascending=False).head(10)
                     
                     if len(time_by_file) > 0:
+                        colors = get_theme_adaptive_colors()
                         fig_files = px.bar(
                             x=time_by_file.values,
                             y=time_by_file.index,
@@ -920,7 +1045,12 @@ def main():
                             title="Top 10 Arquivos por Tempo Gasto (minutos)",
                             labels={'x': 'Tempo Total (min)', 'y': 'Arquivo'},
                             color=time_by_file.values,
-                            color_continuous_scale='plasma'
+                            color_continuous_scale=colors['color_scale']
+                        )
+                        fig_files.update_layout(
+                            paper_bgcolor=colors['paper_bgcolor'],
+                            plot_bgcolor=colors['plot_bgcolor'],
+                            font=dict(color=colors['text_color'])
                         )
                         st.plotly_chart(fig_files, use_container_width=True)
                     
@@ -936,27 +1066,39 @@ def main():
                         with col1:
                             # Quantidade por centro - ordenar decrescente
                             count_by_centro = centro_analysis['centro'].value_counts().sort_values(ascending=False)
+                            colors = get_theme_adaptive_colors()
                             fig_count = px.bar(
                                 x=count_by_centro.index,
                                 y=count_by_centro.values,
                                 title="Quantidade de Arquivos por Centro",
                                 labels={'x': 'Centro', 'y': 'Quantidade de Arquivos'},
                                 color=count_by_centro.values,
-                                color_continuous_scale='blues'
+                                color_continuous_scale='teal'
+                            )
+                            fig_count.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color'])
                             )
                             st.plotly_chart(fig_count, use_container_width=True)
                         
                         with col2:
                             # Tempo por centro - ordenar decrescente
                             time_by_centro = centro_analysis.groupby('centro')['pdr_time'].sum().sort_values(ascending=False)
-                            
+                            colors = get_theme_adaptive_colors()
                             fig_time = px.bar(
                                 x=time_by_centro.index,
                                 y=time_by_centro.values,
                                 title="Tempo Total por Centro (minutos)",
                                 labels={'x': 'Centro', 'y': 'Tempo Total (min)'},
                                 color=time_by_centro.values,
-                                color_continuous_scale='greens'
+                                color_continuous_scale='algae'
+                            )
+                            
+                            fig_time.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color'])
                             )
                             
                             # Adicionar anotações com o tempo
@@ -967,7 +1109,7 @@ def main():
                                     text=f"{time_val:.0f} min",
                                     showarrow=False,
                                     yshift=10,
-                                    font=dict(color="white", size=12)
+                                    font=dict(color=colors['text_color'], size=12)
                                 )
                             
                             st.plotly_chart(fig_time, use_container_width=True)
@@ -981,7 +1123,7 @@ def main():
                         }).round(2)
                         
                         centro_stats.columns = ['Tempo Total (min)', 'Tempo Médio (min)', 'Tempo Máximo (min)', 'Total de Revisões', 'Arquivos Únicos']
-                        st.dataframe(centro_stats, width="stretch")
+                        st.dataframe(centro_stats, use_container_width=True)
                     
                     # Análise por estado
                     st.subheader("🗺️ Análise por Estado")
@@ -994,27 +1136,39 @@ def main():
                         with col1:
                             # Quantidade por estado - ordenar decrescente
                             count_by_estado = estado_analysis['estado'].value_counts().sort_values(ascending=False).head(10)
+                            colors = get_theme_adaptive_colors()
                             fig_count_estado = px.bar(
                                 x=count_by_estado.index,
                                 y=count_by_estado.values,
                                 title="Top 10 Estados por Quantidade de Arquivos",
                                 labels={'x': 'Estado', 'y': 'Quantidade de Arquivos'},
                                 color=count_by_estado.values,
-                                color_continuous_scale='purples'
+                                color_continuous_scale='purp'
+                            )
+                            fig_count_estado.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color'])
                             )
                             st.plotly_chart(fig_count_estado, use_container_width=True)
                         
                         with col2:
                             # Tempo por estado - ordenar decrescente
                             time_by_estado = estado_analysis.groupby('estado')['pdr_time'].sum().sort_values(ascending=False).head(10)
-                            
+                            colors = get_theme_adaptive_colors()
                             fig_time_estado = px.bar(
                                 x=time_by_estado.index,
                                 y=time_by_estado.values,
                                 title="Top 10 Estados por Tempo Total (minutos)",
                                 labels={'x': 'Estado', 'y': 'Tempo Total (min)'},
                                 color=time_by_estado.values,
-                                color_continuous_scale='oranges'
+                                color_continuous_scale='sunsetdark'
+                            )
+                            
+                            fig_time_estado.update_layout(
+                                paper_bgcolor=colors['paper_bgcolor'],
+                                plot_bgcolor=colors['plot_bgcolor'],
+                                font=dict(color=colors['text_color'])
                             )
                             
                             # Adicionar anotações com o tempo
@@ -1025,7 +1179,7 @@ def main():
                                     text=f"{time_val:.0f} min",
                                     showarrow=False,
                                     yshift=10,
-                                    font=dict(color="white", size=12)
+                                    font=dict(color=colors['text_color'], size=12)
                                 )
                             
                             st.plotly_chart(fig_time_estado, use_container_width=True)
